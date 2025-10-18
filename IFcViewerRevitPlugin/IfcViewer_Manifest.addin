@@ -1,0 +1,14 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<RevitAddIns>
+	<AddIn Type="Command">
+		<Name>IFcViewerRevitPlugin</Name>
+		<Assembly>IFcViewerRevitPlugin.dll</Assembly>
+		<FullClassName>IFcViewerRevitPlugin.Commands</FullClassName>
+		<Text>IFcViewerRevitPlugin</Text>
+		<Description>test ifc viewer inside Revit</Description>
+		<AddInId> 7317F4FB-05BC-445C-B8E3-200D2954B04D </AddInId>
+		<VendorId>Ashraf</VendorId>
+		<VendorDescription>BIM Developer, ashrafabbasramadan@gmail.com</VendorDescription>
+	</AddIn>
+</RevitAddIns>
+

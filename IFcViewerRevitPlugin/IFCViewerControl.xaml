@@ -1,0 +1,10 @@
+﻿<UserControl x:Class="IFcViewerRevitPlugin.IFCViewerControl"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:xbim="clr-namespace:Xbim.Presentation;assembly=Xbim.Presentation"
+             Height="450" Width="800">
+    <Grid>
+        <xbim:DrawingControl3D x:Name="DrawingControl" 
+                               Model="{Binding GeometryContext, Mode=OneWay}" />
+    </Grid>
+</UserControl>

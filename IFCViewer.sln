@@ -1,11 +1,13 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
-VisualStudioVersion = 17.12.35707.178 d17.12
+VisualStudioVersion = 17.12.35707.178
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "IFCViewer", "IFCViewer\IFCViewer.csproj", "{45AB3C59-BF99-4B83-AAA2-07B41F24066E}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "IFcViewerRevitPlugin", "IFcViewerRevitPlugin\IFcViewerRevitPlugin.csproj", "{8198A349-9BF0-4C51-B336-ABAA20C2EE99}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "IFcViewerStandalone", "IFcViewerStandalone\IFcViewerStandalone.csproj", "{BB503A1D-35F4-4C27-AF15-FB03E5F965FE}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -21,6 +23,10 @@ Global
 		{8198A349-9BF0-4C51-B336-ABAA20C2EE99}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{8198A349-9BF0-4C51-B336-ABAA20C2EE99}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{8198A349-9BF0-4C51-B336-ABAA20C2EE99}.Release|Any CPU.Build.0 = Release|Any CPU
+		{BB503A1D-35F4-4C27-AF15-FB03E5F965FE}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{BB503A1D-35F4-4C27-AF15-FB03E5F965FE}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{BB503A1D-35F4-4C27-AF15-FB03E5F965FE}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{BB503A1D-35F4-4C27-AF15-FB03E5F965FE}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

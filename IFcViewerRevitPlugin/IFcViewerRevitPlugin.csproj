@@ -171,11 +171,33 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Commands.cs" />
+    <Compile Include="Constants\ExportConstants.cs" />
+    <Compile Include="Constants\GeometryConstants.cs" />
+    <Compile Include="Constants\UiConstants.cs" />
+    <Compile Include="DTOs\BoundingBoxData.cs" />
+    <Compile Include="DTOs\ExportOptions.cs" />
+    <Compile Include="DTOs\FilterCriteria.cs" />
+    <Compile Include="DTOs\GeometryGenerationOptions.cs" />
+    <Compile Include="DTOs\ModelLoadOptions.cs" />
     <Compile Include="IFCViewerControl.xaml.cs">
       <DependentUpon>IFCViewerControl.xaml</DependentUpon>
     </Compile>
+    <Compile Include="Infrastructure\ServiceContainer.cs" />
     <Compile Include="Models\IfcModelWrapper.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="Services\BoundingBoxService.cs" />
+    <Compile Include="Services\FilteringService.cs" />
+    <Compile Include="Services\GeometryService.cs" />
+    <Compile Include="Services\IBoundingBoxService.cs" />
+    <Compile Include="Services\IfcExportService.cs" />
+    <Compile Include="Services\IfcLoadingService.cs" />
+    <Compile Include="Services\IFilteringService.cs" />
+    <Compile Include="Services\IGeometryService.cs" />
+    <Compile Include="Services\IIfcExportService.cs" />
+    <Compile Include="Services\IIfcLoadingService.cs" />
+    <Compile Include="Services\IPerformanceOptimizationService.cs" />
+    <Compile Include="Services\PerformanceOptimizationService.cs" />
+    <Compile Include="ViewModels\ViewerViewModelRefactored.cs" />
     <Compile Include="Views\ViewerWindow.xaml.cs">
       <DependentUpon>ViewerWindow.xaml</DependentUpon>
     </Compile>

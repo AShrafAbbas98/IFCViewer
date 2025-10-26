@@ -98,14 +98,26 @@ namespace IFcViewerRevitPlugin.ViewModels
         public string SelectedLevel
         {
             get => _selectedLevel;
-            set => SetProperty(ref _selectedLevel, value);
+            set
+            {
+                if (SetProperty(ref _selectedLevel, value) && !string.IsNullOrEmpty(value))
+                {
+                    _ = FilterByLevelAsync(value);
+                }
+            }
         }
 
         private string _selectedRoom;
         public string SelectedRoom
         {
             get => _selectedRoom;
-            set => SetProperty(ref _selectedRoom, value);
+            set
+            {
+                if (SetProperty(ref _selectedRoom, value) && !string.IsNullOrEmpty(value))
+                {
+                    _ = FilterByRoomAsync(value);
+                }
+            }
         }
 
         public ObservableCollection<string> Levels { get; } = new ObservableCollection<string>();

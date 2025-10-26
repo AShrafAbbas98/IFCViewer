@@ -186,6 +186,7 @@
     <Compile Include="Models\IfcModelWrapper.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Services\BoundingBoxService.cs" />
+    <Compile Include="Services\ExportCacheService.cs" />
     <Compile Include="Services\FilteringService.cs" />
     <Compile Include="Services\GeometryService.cs" />
     <Compile Include="Services\IBoundingBoxService.cs" />
@@ -197,6 +198,8 @@
     <Compile Include="Services\IIfcLoadingService.cs" />
     <Compile Include="Services\IPerformanceOptimizationService.cs" />
     <Compile Include="Services\PerformanceOptimizationService.cs" />
+    <Compile Include="Services\RevitDocumentService.cs" />
+    <Compile Include="Services\RevitViewService.cs" />
     <Compile Include="ViewModels\ViewerViewModelRefactored.cs" />
     <Compile Include="Views\ViewerWindow.xaml.cs">
       <DependentUpon>ViewerWindow.xaml</DependentUpon>

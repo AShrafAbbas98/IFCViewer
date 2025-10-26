@@ -44,7 +44,6 @@ namespace IFcViewerRevitPlugin.Services
                 };
 
                 context.CreateContext(
-                    progDelegate: options.ProgressCallback,
                     adjustWcs: options.AdjustWorldCoordinateSystem
                 );
             }

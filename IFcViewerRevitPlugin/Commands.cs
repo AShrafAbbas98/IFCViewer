@@ -10,61 +10,72 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using Xbim.Ifc4.Interfaces;
-
+using IFcViewerRevitPlugin.Services;
+using IFcViewerRevitPlugin.Infrastructure;
 namespace IFcViewerRevitPlugin
 {
     /// <summary>
-    /// External Event Handler with support for full model and room-scoped exports
+    /// Refactored external event handler using service layer
+    /// Follows Single Responsibility and Clean Code principles
     /// </summary>
     public class ViewerExternalEventHandler : IExternalEventHandler
     {
-        private Document _doc;
-        private Action<string> _onIfcExported;
-        private IIfcSpace _roomScope; // For room-scoped exports
-        private static Dictionary<string, string> _exportCache = new Dictionary<string, string>();
-        private static Dictionary<string, string> _roomExportCache = new Dictionary<string, string>();
+        private readonly IRevitDocumentService _documentService;
+        private readonly IRevitViewService _viewService;
+        private readonly IExportCacheService _cacheService;
 
-        public void SetContext(Document doc, Action<string> onIfcExported)
+        private Document _document;
+        private Action<string> _onIfcExported;
+        private string _roomName;
+        private bool _isRoomScopedExport;
+
+        public ViewerExternalEventHandler()
         {
-            _doc = doc;
-            _onIfcExported = onIfcExported;
-            _roomScope = null; // Full model export
+            var container = ServiceContainer.Instance;
+            _documentService = container.Resolve<IRevitDocumentService>();
+            _viewService = container.Resolve<IRevitViewService>();
+            _cacheService = container.Resolve<IExportCacheService>();
         }
 
-        public void SetRoomContext(Document doc, IIfcSpace room, Action<string> onIfcExported)
+        #region Public Methods
+
+        public void SetContext(Document document, Action<string> onIfcExported)
         {
-            _doc = doc;
+            _document = document;
             _onIfcExported = onIfcExported;
-            _roomScope = room; // Room-scoped export
+            _isRoomScopedExport = false;
+            _roomName = null;
+        }
+
+        public void SetRoomContext(Document document, string roomName, Action<string> onIfcExported)
+        {
+            _document = document;
+            _onIfcExported = onIfcExported;
+            _isRoomScopedExport = true;
+            _roomName = roomName;
         }
 
         public void Execute(UIApplication app)
         {
             try
             {
-                if (_doc == null) return;
-
-                string ifcPath;
-
-                if (_roomScope != null)
+                if (!ValidateDocument())
                 {
-                    // Export room-scoped IFC
-                    ifcPath = ExportRoomScopedIfc(_doc, _roomScope);
-                }
-                else
-                {
-                    // Export full model IFC
-                    ifcPath = ExportFullModelIfc(_doc);
+                    return;
                 }
 
-                if (!string.IsNullOrEmpty(ifcPath) && File.Exists(ifcPath))
+                string ifcPath = _isRoomScopedExport
+                    ? ExportRoomScoped()
+                    : ExportFullModel();
+
+                if (IsValidExportPath(ifcPath))
                 {
                     _onIfcExported?.Invoke(ifcPath);
                 }
             }
             catch (Exception ex)
             {
-                TaskDialog.Show("Export Error", $"Error: {ex.Message}");
+                ShowError("Export Error", $"Error: {ex.Message}");
             }
         }
 
@@ -73,444 +84,187 @@ namespace IFcViewerRevitPlugin
             return "IFC Viewer External Event";
         }
 
-        private string ExportFullModelIfc(Document doc)
-        {
-            string tempPath = Path.Combine(Path.GetTempPath(), "RevitIFCExport");
-            if (!Directory.Exists(tempPath))
-                Directory.CreateDirectory(tempPath);
+        #endregion
 
-            // Check cache
-            string cacheKey = GetDocumentCacheKey(doc);
-            if (_exportCache.ContainsKey(cacheKey))
+        #region Private Methods - Validation
+
+        private bool ValidateDocument()
+        {
+            if (_document == null)
             {
-                string cachedPath = _exportCache[cacheKey];
-                if (File.Exists(cachedPath))
-                {
-                    var fileInfo = new FileInfo(cachedPath);
-                    if (DateTime.Now - fileInfo.LastWriteTime < TimeSpan.FromMinutes(5))
-                    {
-                        return cachedPath;
-                    }
-                }
+                ShowError("Error", "No document specified");
+                return false;
             }
 
-            string fileName = $"{SanitizeFileName(doc.Title)}_{DateTime.Now:yyyyMMdd_HHmmss}.ifc";
+            if (!_documentService.CanExportDocument(_document, out string message))
+            {
+                ShowError("Error", message);
+                return false;
+            }
+
+            return true;
+        }
+
+        private bool IsValidExportPath(string path)
+        {
+            return !string.IsNullOrEmpty(path) && File.Exists(path);
+        }
+
+        #endregion
+
+        #region Private Methods - Full Model Export
+
+        private string ExportFullModel()
+        {
+            string cacheKey = _documentService.GetDocumentCacheKey(_document);
+            string cachedPath = _cacheService.GetCachedExport(cacheKey, TimeSpan.FromMinutes(5));
+
+            if (cachedPath != null)
+            {
+                return cachedPath;
+            }
+
+            string tempPath = GetExportDirectory();
+            string fileName = GenerateFileName(false);
             string fullPath = Path.Combine(tempPath, fileName);
 
-
             try
             {
-                IFCExportOptions ifcOptions = new IFCExportOptions
-                {
-                    FileVersion = IFCVersion.IFC2x3,
-                    WallAndColumnSplitting = false,
-                    ExportBaseQuantities = false,
-                    SpaceBoundaryLevel = 2
-                };
+                ExportDocumentToIfc(tempPath, fileName, null);
 
-                View filteredView = CreateFilteredView(doc);
-                if (filteredView != null)
-                {
-                    ifcOptions.FilterViewId = filteredView.Id;
-                }
-
-                using (var trans = new Transaction(doc, "Export IFC"))
-                {
-                    trans.Start();
-                    doc.Export(tempPath, fileName, ifcOptions);
-                    trans.Commit();
-                }
-
-                // Cache the export
-                _exportCache[cacheKey] = fullPath;
-                CleanupOldExports(tempPath, 3);
+                _cacheService.CacheExport(cacheKey, fullPath);
+                _cacheService.CleanupOldExports(tempPath, 3);
 
                 return fullPath;
             }
             catch (Exception ex)
             {
-                TaskDialog.Show("Export Error", $"Error exporting full model: {ex.Message}");
-                return null;
-            }
-        }
-        /// <summary>
-        /// Optional: Create a filtered 3D view for specific categories
-        /// Uncomment and use if you want to export only certain elements
-        /// </summary>
-        private View CreateFilteredView(Document doc)
-        {
-            try
-            {
-                // Find default 3D view
-                View3D default3D = new FilteredElementCollector(doc)
-                    .OfClass(typeof(View3D))
-                    .Cast<View3D>()
-                    .FirstOrDefault(v => !v.IsTemplate && v.Name == "{3D}");
-
-                if (default3D == null) return null;
-
-                View3D filteredView = null;
-                ElementId viewId = null;
-
-                using (var trans = new Transaction(doc, "Create Filtered View"))
-                {
-                    trans.Start();
-
-                    viewId = default3D.Duplicate(ViewDuplicateOption.Duplicate);
-                    filteredView = doc.GetElement(viewId) as View3D;
-
-                    if (filteredView != null)
-                    {
-                        filteredView.Name = $"IFC Export Filter - {Guid.NewGuid().ToString().Substring(0, 8)}";
-
-                        // Define which categories to export
-                        var categoriesToShow = new[]
-                        {
-                            BuiltInCategory.OST_Walls,
-                            BuiltInCategory.OST_Floors,
-                            BuiltInCategory.OST_Ceilings,
-                            BuiltInCategory.OST_Rooms,
-                        };
-
-                        // Hide all categories except the ones we want
-                        foreach (Category cat in doc.Settings.Categories)
-                        {
-                            if (cat.CategoryType == CategoryType.Model &&
-                                cat.get_AllowsVisibilityControl(filteredView))
-                            {
-                                bool shouldShow = categoriesToShow.Contains((BuiltInCategory)cat.Id.IntegerValue);
-
-                                try
-                                {
-                                    filteredView.SetCategoryHidden(cat.Id, !shouldShow);
-                                }
-                                catch
-                                {
-                                    // Some categories can't be hidden
-                                }
-                            }
-                        }
-                    }
-
-                    trans.Commit();
-                }
-
-                return filteredView;
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"Error creating filtered view: {ex.Message}");
+                ShowError("Export Error", $"Error exporting full model: {ex.Message}");
                 return null;
             }
         }
 
-        private string ExportRoomScopedIfc(Document doc, IIfcSpace space)
+        #endregion
+
+        #region Private Methods - Room-Scoped Export
+
+        private string ExportRoomScoped()
         {
-            string tempPath = Path.Combine(Path.GetTempPath(), "RevitIFCExport", "Rooms");
-            if (!Directory.Exists(tempPath))
-                Directory.CreateDirectory(tempPath);
+            string cacheKey = $"{_documentService.GetDocumentCacheKey(_document)}_{_roomName}";
+            string cachedPath = _cacheService.GetCachedExport(cacheKey, TimeSpan.FromMinutes(10));
 
-            // Check room cache
-            string roomName = space.Name ?? space.LongName ?? $"Space_{space.EntityLabel}";
-            string roomCacheKey = $"{GetDocumentCacheKey(doc)}_{roomName}";
-
-            if (_roomExportCache.ContainsKey(roomCacheKey))
+            if (cachedPath != null)
             {
-                string cachedPath = _roomExportCache[roomCacheKey];
-                if (File.Exists(cachedPath))
-                {
-                    var fileInfo = new FileInfo(cachedPath);
-                    if (DateTime.Now - fileInfo.LastWriteTime < TimeSpan.FromMinutes(10))
-                    {
-                        return cachedPath;
-                    }
-                }
+                return cachedPath;
             }
 
             try
             {
-                Room revitRoom = FindRevitRoomByName(doc, roomName);
-                if (revitRoom == null) return null;
+                var room = _viewService.FindRoomByName(_document, _roomName);
+                if (room == null)
+                {
+                    ShowError("Error", $"Room '{_roomName}' not found");
+                    return null;
+                }
 
-                // Create the section box view
-                View3D roomView = CreateRoomScopedView(doc, revitRoom);
-                if (roomView == null) return null;
+                View3D roomView = _viewService.CreateRoomScopedView(_document, room);
+                if (roomView == null)
+                {
+                    ShowError("Error", "Could not create room view");
+                    return null;
+                }
 
-                string fileName = $"{SanitizeFileName(doc.Title)}_Room_{SanitizeFileName(roomName)}_{DateTime.Now:yyyyMMdd_HHmmss}.ifc";
+                string tempPath = GetRoomExportDirectory();
+                string fileName = GenerateFileName(true);
                 string fullPath = Path.Combine(tempPath, fileName);
 
-                // CRITICAL: Use these export options for proper section box clipping
-                IFCExportOptions ifcOptions = new IFCExportOptions
-                {
-                    FileVersion = IFCVersion.IFC2x3CV2,
-                    WallAndColumnSplitting = true,  // This enables geometry splitting at section box boundaries
-                    ExportBaseQuantities = false,
-                    SpaceBoundaryLevel = 1,
-                    FilterViewId = roomView.Id,     // Use our section box view
-                };
+                ExportDocumentToIfc(tempPath, fileName, roomView.Id);
 
-                using (var trans = new Transaction(doc, "Export Room IFC"))
-                {
-                    trans.Start();
-                    doc.Export(tempPath, fileName, ifcOptions);
-                    trans.Commit();
-                }
+                _viewService.DeleteView(_document, roomView);
 
-                // Clean up the temporary view
-                using (var trans = new Transaction(doc, "Delete Temp View"))
-                {
-                    trans.Start();
-                    try { doc.Delete(roomView.Id); } catch { }
-                    trans.Commit();
-                }
-
-                // Cache and return
-                _roomExportCache[roomCacheKey] = fullPath;
-                CleanupOldExports(tempPath, 10);
+                _cacheService.CacheExport(cacheKey, fullPath);
+                _cacheService.CleanupOldExports(tempPath, 10);
 
                 return fullPath;
             }
             catch (Exception ex)
             {
-                TaskDialog.Show("Export Error", $"Error exporting room '{roomName}': {ex.Message}");
+                ShowError("Export Error", $"Error exporting room '{_roomName}': {ex.Message}");
                 return null;
             }
         }
 
-        private Room FindRevitRoomByName(Document doc, string roomName)
+        #endregion
+
+        #region Private Methods - Export Helpers
+
+        private void ExportDocumentToIfc(string directory, string fileName, ElementId filterViewId)
         {
-            try
+            EnsureDirectoryExists(directory);
+
+            var ifcOptions = new IFCExportOptions
             {
-                // Find room by name or number
-                var rooms = new FilteredElementCollector(doc)
-                    .OfCategory(BuiltInCategory.OST_Rooms)
-                    .WhereElementIsNotElementType()
-                    .Cast<Room>()
-                    .Where(r => !string.IsNullOrEmpty(r.Name) || !string.IsNullOrEmpty(r.Number))
-                    .ToList();
+                FileVersion = IFCVersion.IFC2x3CV2,
+                WallAndColumnSplitting = false,
+                ExportBaseQuantities = false,
+                SpaceBoundaryLevel = 2
+            };
 
-                // Try exact match on name
-                var room = rooms.FirstOrDefault(r => r.Name == roomName);
-                if (room != null) return room;
-
-                // Try match on number
-                room = rooms.FirstOrDefault(r => r.Number == roomName);
-                if (room != null) return room;
-
-                // Try partial match
-                room = rooms.FirstOrDefault(r =>
-                    (r.Name != null && r.Name.Contains(roomName)) ||
-                    (r.Number != null && r.Number.Contains(roomName)));
-
-                return room;
+            if (filterViewId != null)
+            {
+                ifcOptions.FilterViewId = filterViewId;
             }
-            catch (Exception ex)
+
+            using (var trans = new Transaction(_document, "Export IFC"))
             {
-                System.Diagnostics.Debug.WriteLine($"Error finding room: {ex.Message}");
-                return null;
+                trans.Start();
+                _document.Export(directory, fileName, ifcOptions);
+                trans.Commit();
             }
         }
 
-        private View3D CreateRoomScopedView(Document doc, Room room)
+        private string GetExportDirectory()
         {
-            try
-            {
-                // Get room bounding box - this is the key!
-                BoundingBoxXYZ roomBBox = room.get_BoundingBox(null);
-
-                if (roomBBox == null)
-                {
-                    // Try alternative method to get room geometry
-                    var options = new Autodesk.Revit.DB.Options();
-                    options.ComputeReferences = true;
-                    options.IncludeNonVisibleObjects = true;
-
-                    GeometryElement geomElem = room.get_Geometry(options);
-                    if (geomElem != null)
-                    {
-                        foreach (GeometryObject geomObj in geomElem)
-                        {
-                            if (geomObj is Solid solid && solid.Faces.Size > 0)
-                            {
-                                roomBBox = solid.GetBoundingBox();
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                if (roomBBox == null)
-                {
-                    TaskDialog.Show("Room Bounds", "Could not determine room boundaries");
-                    return null;
-                }
-
-                // Find or create 3D view type
-                View3D default3D = new FilteredElementCollector(doc)
-                    .OfClass(typeof(View3D))
-                    .Cast<View3D>()
-                    .FirstOrDefault(v => !v.IsTemplate && v.Name == "{3D}");
-
-                if (default3D == null)
-                {
-                    return null;
-                }
-
-                View3D roomView = null;
-                ElementId viewId = null;
-
-                using (var trans = new Transaction(doc, "Create Room Section View"))
-                {
-                    trans.Start();
-
-                    // Duplicate the default 3D view
-                    viewId = default3D.Duplicate(ViewDuplicateOption.Duplicate);
-                    roomView = doc.GetElement(viewId) as View3D;
-
-                    if (roomView != null)
-                    {
-                        roomView.Name = $"Room_{room.Name ?? room.Number}_{Guid.NewGuid().ToString().Substring(0, 6)}";
-
-                        // CRITICAL: Enable section box
-                        roomView.IsSectionBoxActive = true;
-
-                        // Get room bounds with proper padding
-                        XYZ min = roomBBox.Min;
-                        XYZ max = roomBBox.Max;
-
-                        // Add padding to include walls, doors, windows
-                        double padding = 2.0; // Increased padding to ensure we capture adjacent elements
-                        XYZ paddingVector = new XYZ(padding, padding, padding);
-
-                        min = min - paddingVector;
-                        max = max + paddingVector;
-
-                        // Ensure we have a valid volume
-                        if (max.X - min.X < 0.1) max = new XYZ(min.X + 1.0, max.Y, max.Z);
-                        if (max.Y - min.Y < 0.1) max = new XYZ(max.X, min.Y + 1.0, max.Z);
-                        if (max.Z - min.Z < 0.1) max = new XYZ(max.X, max.Y, min.Z + 1.0);
-
-                        // Create and set section box
-                        BoundingBoxXYZ sectionBox = new BoundingBoxXYZ
-                        {
-                            Min = min,
-                            Max = max,
-                            Transform = Transform.Identity // World coordinates
-                        };
-
-                        roomView.SetSectionBox(sectionBox);
-
-                        // Set appropriate detail level
-                        roomView.DetailLevel = ViewDetailLevel.Medium;
-
-                        // Hide unnecessary categories for cleaner export
-                        HideUnnecessaryCategories(doc, roomView);
-
-                        // Make sure the view will export clipped geometry
-                        roomView.CropBoxActive = true;
-                        roomView.CropBoxVisible = false;
-                    }
-
-                    trans.Commit();
-                }
-
-                return roomView;
-            }
-            catch (Exception ex)
-            {
-                TaskDialog.Show("View Creation Error", $"Error creating room view: {ex.Message}");
-                return null;
-            }
+            return Path.Combine(Path.GetTempPath(), "RevitIFCExport");
         }
-        private void HideUnnecessaryCategories(Document doc, View3D view)
-        {
-            try
-            {
-                // Categories to hide for cleaner room visualization
-                var categoriesToHide = new[]
-                {
-                    BuiltInCategory.OST_Grids,
-                    BuiltInCategory.OST_Levels,
-                    BuiltInCategory.OST_SectionBox,
-                    BuiltInCategory.OST_CLines,
-                    BuiltInCategory.OST_Constraints
-                };
 
-                foreach (var catId in categoriesToHide)
-                {
-                    try
-                    {
-                        Category cat = doc.Settings.Categories.get_Item(catId);
-                        if (cat != null && cat.get_AllowsVisibilityControl(view))
-                        {
-                            view.SetCategoryHidden(cat.Id, true);
-                        }
-                    }
-                    catch { }
-                }
-            }
-            catch (Exception ex)
+        private string GetRoomExportDirectory()
+        {
+            return Path.Combine(Path.GetTempPath(), "RevitIFCExport", "Rooms");
+        }
+
+        private string GenerateFileName(bool isRoomExport)
+        {
+            string title = _documentService.SanitizeFileName(_document.Title);
+            string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+
+            if (isRoomExport)
             {
-                System.Diagnostics.Debug.WriteLine($"Error hiding categories: {ex.Message}");
+                string roomName = _documentService.SanitizeFileName(_roomName);
+                return $"{title}_Room_{roomName}_{timestamp}.ifc";
+            }
+
+            return $"{title}_{timestamp}.ifc";
+        }
+
+        private void EnsureDirectoryExists(string path)
+        {
+            if (!Directory.Exists(path))
+            {
+                Directory.CreateDirectory(path);
             }
         }
 
-        private string GetDocumentCacheKey(Document doc)
+        private void ShowError(string title, string message)
         {
-            try
-            {
-                string path = doc.PathName;
-                if (string.IsNullOrEmpty(path))
-                {
-                    return $"unsaved_{doc.Title}_{doc.GetHashCode()}";
-                }
-
-                var fileInfo = new FileInfo(path);
-                return $"{path}_{fileInfo.LastWriteTime.Ticks}";
-            }
-            catch
-            {
-                return $"doc_{doc.Title}_{doc.GetHashCode()}";
-            }
+            TaskDialog.Show(title, message);
         }
 
-        private void CleanupOldExports(string directory, int keepCount)
-        {
-            try
-            {
-                var files = Directory.GetFiles(directory, "*.ifc")
-                    .Select(f => new FileInfo(f))
-                    .OrderByDescending(f => f.LastWriteTime)
-                    .ToList();
-
-                foreach (var file in files.Skip(keepCount))
-                {
-                    try
-                    {
-                        file.Delete();
-                    }
-                    catch { }
-                }
-            }
-            catch { }
-        }
-
-        private string SanitizeFileName(string s)
-        {
-            if (string.IsNullOrEmpty(s)) return "unnamed";
-
-            foreach (var c in Path.GetInvalidFileNameChars())
-                s = s.Replace(c, '_');
-
-            // Also remove spaces and special characters for cleaner filenames
-            s = s.Replace(" ", "_");
-
-            return s;
-        }
+        #endregion
     }
 
     /// <summary>
-    /// Main command
+    /// Refactored main command - Clean and focused
     /// </summary>
     [Transaction(TransactionMode.Manual)]
     [Regeneration(RegenerationOption.Manual)]
@@ -522,14 +276,45 @@ namespace IFcViewerRevitPlugin
 
         public Commands()
         {
-            LoadLibrary("RestSharp.dll");
-            AppDomain.CurrentDomain.AssemblyResolve += AssemblyResolve;
+            InitializeAssemblyResolution();
         }
 
         public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
         {
-            UIApplication uiApp = commandData.Application;
-            UIDocument uiDoc = uiApp.ActiveUIDocument;
+            try
+            {
+                var validationResult = ValidateExecution(commandData, out message);
+                if (validationResult != Result.Succeeded)
+                {
+                    return validationResult;
+                }
+
+                InitializeExternalEvent();
+
+                if (TryActivateExistingWindow())
+                {
+                    return Result.Succeeded;
+                }
+
+                OpenNewViewerWindow(commandData.Application.ActiveUIDocument);
+
+                return Result.Succeeded;
+            }
+            catch (Exception ex)
+            {
+                message = $"Error opening IFC Viewer: {ex.Message}";
+                TaskDialog.Show("Error", $"{message}\n\nDetails:\n{ex.StackTrace}");
+                return Result.Failed;
+            }
+        }
+
+        #region Private Methods - Validation
+
+        private Result ValidateExecution(ExternalCommandData commandData, out string message)
+        {
+            message = string.Empty;
+
+            UIDocument uiDoc = commandData.Application.ActiveUIDocument;
 
             if (uiDoc == null)
             {
@@ -547,45 +332,66 @@ namespace IFcViewerRevitPlugin
                 return Result.Failed;
             }
 
-            try
+            return Result.Succeeded;
+        }
+
+        #endregion
+
+        #region Private Methods - Initialization
+
+        private void InitializeExternalEvent()
+        {
+            if (_eventHandler == null)
             {
-                // Initialize external event handler if not exists
-                if (_eventHandler == null)
-                {
-                    _eventHandler = new ViewerExternalEventHandler();
-                    _externalEvent = ExternalEvent.Create(_eventHandler);
-                }
-
-                // Check if window exists and is open
-                if (_viewerWindow != null)
-                {
-                    try
-                    {
-                        _viewerWindow.Activate();
-                        _viewerWindow.Focus();
-                        return Result.Succeeded;
-                    }
-                    catch
-                    {
-                        _viewerWindow = null;
-                    }
-                }
-
-                // Create new viewer window
-                _viewerWindow = new ViewerWindow(doc);
-                _viewerWindow.SetExternalEvent(_externalEvent, _eventHandler);
-                _viewerWindow.Show();
-                _viewerWindow.Closed += (s, e) => { _viewerWindow = null; };
-
-                return Result.Succeeded;
-            }
-            catch (Exception ex)
-            {
-                message = $"Error opening IFC Viewer: {ex.Message}";
-                TaskDialog.Show("Error", $"{message}\n\nDetails:\n{ex.StackTrace}");
-                return Result.Failed;
+                _eventHandler = new ViewerExternalEventHandler();
+                _externalEvent = ExternalEvent.Create(_eventHandler);
             }
         }
+
+        private void InitializeAssemblyResolution()
+        {
+            LoadLibrary("RestSharp.dll");
+            AppDomain.CurrentDomain.AssemblyResolve += AssemblyResolve;
+        }
+
+        #endregion
+
+        #region Private Methods - Window Management
+
+        private bool TryActivateExistingWindow()
+        {
+            if (_viewerWindow != null)
+            {
+                try
+                {
+                    _viewerWindow.Activate();
+                    _viewerWindow.Focus();
+                    return true;
+                }
+                catch
+                {
+                    _viewerWindow = null;
+                    return false;
+                }
+            }
+
+            return false;
+        }
+
+        private void OpenNewViewerWindow(UIDocument uiDocument)
+        {
+            _viewerWindow = new ViewerWindow(uiDocument);
+            _viewerWindow.SetExternalEvent(_externalEvent, _eventHandler);
+            _viewerWindow.Show();
+            _viewerWindow.Closed += OnWindowClosed;
+        }
+
+        private void OnWindowClosed(object sender, EventArgs e)
+        {
+            _viewerWindow = null;
+        }
+
+        #endregion
 
         #region Assembly Resolution
 
@@ -594,27 +400,23 @@ namespace IFcViewerRevitPlugin
             string assemblyName = new AssemblyName(args.Name).Name;
 
             if (string.IsNullOrEmpty(assemblyName))
+            {
                 return null;
+            }
 
+            return TryLoadAssembly(assemblyName);
+        }
+
+        private Assembly TryLoadAssembly(string assemblyName)
+        {
             try
             {
-                string pluginDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
-                string assemblyPath = Path.Combine(pluginDir, assemblyName + ".dll");
-
-                if (File.Exists(assemblyPath))
-                {
-                    return Assembly.LoadFrom(assemblyPath);
-                }
-
-                string[] variations = new[]
-                {
-                    assemblyName + ".dll",
-                    assemblyName.Replace(".dll", "") + ".dll"
-                };
+                string pluginDir = GetPluginDirectory();
+                string[] variations = GetAssemblyVariations(assemblyName);
 
                 foreach (string variation in variations)
                 {
-                    assemblyPath = Path.Combine(pluginDir, variation);
+                    string assemblyPath = Path.Combine(pluginDir, variation);
                     if (File.Exists(assemblyPath))
                     {
                         return Assembly.LoadFrom(assemblyPath);
@@ -627,6 +429,20 @@ namespace IFcViewerRevitPlugin
             }
 
             return null;
+        }
+
+        private string[] GetAssemblyVariations(string assemblyName)
+        {
+            return new[]
+            {
+                assemblyName + ".dll",
+                assemblyName.Replace(".dll", "") + ".dll"
+            };
+        }
+
+        private string GetPluginDirectory()
+        {
+            return Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
         }
 
         private static void LoadLibrary(string assemblyName)

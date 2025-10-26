@@ -46,6 +46,11 @@ namespace IFcViewerRevitPlugin.Infrastructure
             RegisterSingleton<IIfcExportService>(new IfcExportService());
             RegisterSingleton<IBoundingBoxService>(new BoundingBoxService());
 
+            // Revit-specific services
+            RegisterSingleton<IRevitDocumentService>(new RevitDocumentService());
+            RegisterSingleton<IRevitViewService>(new RevitViewService());
+            RegisterSingleton<IExportCacheService>(new ExportCacheService());
+
             // Register factories for services that need dependencies
             RegisterFactory<IFilteringService>(() =>
                 new FilteringService(Resolve<IBoundingBoxService>()));
